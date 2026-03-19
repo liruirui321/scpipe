@@ -138,24 +138,50 @@ OLIGO_R2=("{outdir}/test_oligo_R2.fastq.gz")
 
 def cmd_upstream(args):
     """运行上游 pipeline"""
-    check_docker()
+    if not args.local:
+        check_docker()
     if not os.path.exists('upstream_config.sh'):
         print("Error: 找不到 upstream_config.sh")
         print("运行 scpipe init 生成配置模板")
         sys.exit(1)
     step = args.step or 'status'
-    return run_shell('run_upstream.sh', [step])
+    env = os.environ.copy()
+    env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + env.get('PATH', '')
+    if args.local:
+        env['SCPIPE_MODE'] = 'local'
+    bash = shutil.which('bash') or '/bin/bash'
+    script = os.path.join(get_script_dir(), 'run_upstream.sh')
+    result = subprocess.run([bash, script, step], cwd=os.getcwd(), env=env)
+    return result.returncode
 
 
 def cmd_downstream(args):
     """运行下游 pipeline"""
-    check_docker()
+    if not args.local:
+        check_docker()
     if not os.path.exists('config.sh'):
         print("Error: 找不到 config.sh")
         print("运行 scpipe init 生成配置模板")
         sys.exit(1)
     step = args.step or 'status'
-    return run_shell('run_pipeline.sh', [step])
+    env = os.environ.copy()
+    env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + env.get('PATH', '')
+    if args.local:
+        env['SCPIPE_MODE'] = 'local'
+    bash = shutil.which('bash') or '/bin/bash'
+    script = os.path.join(get_script_dir(), 'run_pipeline.sh')
+    result = subprocess.run([bash, script, step], cwd=os.getcwd(), env=env)
+    return result.returncode
+
+
+def cmd_install_deps(args):
+    """安装本地依赖（不使用 Docker）"""
+    install_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'install_local.sh')
+    bash = shutil.which('bash') or '/bin/bash'
+    env = os.environ.copy()
+    env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + env.get('PATH', '')
+    result = subprocess.run([bash, install_script], cwd=os.getcwd(), env=env)
+    return result.returncode
 
 
 def cmd_status(args):
@@ -220,12 +246,17 @@ GitHub: https://github.com/liruirui123/scpipe
     p_up.add_argument('step', nargs='?', default='status',
                        choices=['all', 'mkgtf', 'mkref', 'count', 'velocity', 'status', 'reset'],
                        help='运行步骤')
+    p_up.add_argument('--local', action='store_true', help='不使用 Docker，直接调用本地工具')
 
     # downstream
     p_down = sub.add_parser('downstream', help='下游分析 (矩阵 → QC h5ad)')
     p_down.add_argument('step', nargs='?', default='status',
                          choices=['all', 'prep', 'wdl', 'soupx', 'scrublet', 'sscrublet', 'scdatacg', 'status', 'reset'],
                          help='运行步骤')
+    p_down.add_argument('--local', action='store_true', help='不使用 Docker，直接调用本地工具')
+
+    # install-deps
+    sub.add_parser('install-deps', help='安装本地依赖（无 Docker 模式）')
 
     # status
     sub.add_parser('status', help='查看所有步骤状态')
@@ -245,6 +276,7 @@ GitHub: https://github.com/liruirui123/scpipe
         'test': cmd_test,
         'upstream': cmd_upstream,
         'downstream': cmd_downstream,
+        'install-deps': cmd_install_deps,
         'status': cmd_status,
         'clean': cmd_clean,
     }

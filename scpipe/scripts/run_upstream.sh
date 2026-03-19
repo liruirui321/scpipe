@@ -27,6 +27,17 @@ ok()   { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓ $*${NC}"; }
 warn() { echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠ $*${NC}"; }
 fail() { echo -e "${RED}[$(date '+%H:%M:%S')] ✗ $*${NC}"; exit 1; }
 
+# ---- 运行模式: docker (默认) 或 local ----
+MODE="${SCPIPE_MODE:-docker}"
+if [[ "$MODE" == "local" ]]; then
+    log "运行模式: local (不使用 Docker)"
+    DNBC4TOOLS="${DNBC4TOOLS_PATH:-dnbc4tools}"
+    command -v "$DNBC4TOOLS" &>/dev/null || fail "找不到 dnbc4tools，请运行 scpipe install-deps"
+else
+    log "运行模式: docker"
+    IMG="liruirui123/dnbc4tools:latest"
+fi
+
 STATUS_FILE="${UPSTREAM_WORKDIR}/.upstream_status"
 mark_done() { mkdir -p "$UPSTREAM_WORKDIR"; echo "$1=done"   >> "$STATUS_FILE"; }
 mark_fail() { mkdir -p "$UPSTREAM_WORKDIR"; echo "$1=failed" >> "$STATUS_FILE"; }
@@ -51,20 +62,28 @@ step_mkgtf() {
     log "[step1a/mkgtf] 校正 GTF: $(basename "$GTF_FILE") ..."
     mkdir -p "$REF_DIR"
 
-    # 把原始 FASTA 复制到 ref 目录（Docker 挂载不支持跨目录符号链接）
     cp -f "$(realpath "$FASTA_FILE")" "${REF_DIR}/genome.fa"
 
-    docker run --rm \
-        -v "$(realpath "$GTF_FILE"):/input/raw.gtf:ro" \
-        -v "${REF_DIR}:/ref" \
-        "$IMG" \
-        dnbc4tools tools mkgtf \
+    if [[ "$MODE" == "local" ]]; then
+        "$DNBC4TOOLS" tools mkgtf \
             --action check \
-            --ingtf /input/raw.gtf \
-            --output /ref/corrected.gtf \
-    > "${REF_DIR}/mkgtf.log" 2>&1 \
+            --ingtf "$(realpath "$GTF_FILE")" \
+            --output "${REF_DIR}/corrected.gtf" \
+        > "${REF_DIR}/mkgtf.log" 2>&1
+    else
+        docker run --rm \
+            -v "$(realpath "$GTF_FILE"):/input/raw.gtf:ro" \
+            -v "${REF_DIR}:/ref" \
+            "$IMG" \
+            dnbc4tools tools mkgtf \
+                --action check \
+                --ingtf /input/raw.gtf \
+                --output /ref/corrected.gtf \
+        > "${REF_DIR}/mkgtf.log" 2>&1
+    fi \
     && ok "[step1a/mkgtf] 完成 -> ${REF_DIR}/corrected.gtf" && mark_done "mkgtf" \
     || { mark_fail "mkgtf"; fail "[step1a/mkgtf] 失败，查看日志: ${REF_DIR}/mkgtf.log"; }
+}
 }
 
 # =============================================================================
@@ -88,26 +107,29 @@ step_mkref() {
     log "[step1b/mkref] 建索引: species=${SPECIES}, threads=${THREADS} ..."
     warn "预计耗时 30-60 分钟"
 
-    docker run --rm \
-        -v "${REF_DIR}:/ref:ro" \
-        -v "${index_dir}:/genome" \
-        "$IMG" \
-        dnbc4tools rna mkref \
-            --fasta /ref/genome.fa \
-            --ingtf /ref/corrected.gtf \
+    if [[ "$MODE" == "local" ]]; then
+        "$DNBC4TOOLS" rna mkref \
+            --fasta "${REF_DIR}/genome.fa" \
+            --ingtf "${REF_DIR}/corrected.gtf" \
             --species "$SPECIES" \
             --threads "$THREADS" \
-            --genomeDir /genome \
-    > "${index_dir}/mkref.log" 2>&1 \
+            --genomeDir "$index_dir" \
+        > "${index_dir}/mkref.log" 2>&1
+    else
+        docker run --rm \
+            -v "${REF_DIR}:/ref:ro" \
+            -v "${index_dir}:/genome" \
+            "$IMG" \
+            dnbc4tools rna mkref \
+                --fasta /ref/genome.fa \
+                --ingtf /ref/corrected.gtf \
+                --species "$SPECIES" \
+                --threads "$THREADS" \
+                --genomeDir /genome \
+        > "${index_dir}/mkref.log" 2>&1
+    fi \
     && ok "[step1b/mkref] 完成 -> ${index_dir}" && mark_done "mkref" \
     || { mark_fail "mkref"; fail "[step1b/mkref] 失败，查看日志: ${index_dir}/mkref.log"; }
-
-    # 修复 ref.json 中的路径（确保 rna run 能找到）
-    if [[ -f "${index_dir}/ref.json" ]]; then
-        log "  修复 ref.json 路径 ..."
-        sed -i.bak 's|/ref/genome.fa|/ref/genome.fa|g; s|/ref/corrected.gtf|/ref/corrected.gtf|g' \
-            "${index_dir}/ref.json"
-    fi
 }
 
 # =============================================================================
@@ -147,28 +169,43 @@ step_count() {
 
         log "  [count] 运行: ${s} ..."
 
-        # 每个 fastq 单独挂载（R1/R2 可能在不同目录）
-        docker run --rm \
-            -v "${REF_DIR}:/ref:ro" \
-            -v "${index_dir}:/genome:ro" \
-            -v "$(realpath "$cdna_r1"):/input/cdna_r1.fq.gz:ro" \
-            -v "$(realpath "$cdna_r2"):/input/cdna_r2.fq.gz:ro" \
-            -v "$(realpath "$oligo_r1"):/input/oligo_r1.fq.gz:ro" \
-            -v "$(realpath "$oligo_r2"):/input/oligo_r2.fq.gz:ro" \
-            -v "${out_dir}:/output" \
-            -w /output \
-            "$IMG" \
-            dnbc4tools rna run \
+        if [[ "$MODE" == "local" ]]; then
+            cd "$out_dir"
+            "$DNBC4TOOLS" rna run \
                 --name "$s" \
-                --cDNAfastq1  /input/cdna_r1.fq.gz \
-                --cDNAfastq2  /input/cdna_r2.fq.gz \
-                --oligofastq1 /input/oligo_r1.fq.gz \
-                --oligofastq2 /input/oligo_r2.fq.gz \
-                --genomeDir   /genome/${SPECIES} \
+                --cDNAfastq1  "$(realpath "$cdna_r1")" \
+                --cDNAfastq2  "$(realpath "$cdna_r2")" \
+                --oligofastq1 "$(realpath "$oligo_r1")" \
+                --oligofastq2 "$(realpath "$oligo_r2")" \
+                --genomeDir   "${index_dir}/${SPECIES}" \
                 --chemistry   scRNAv2HT \
                 --darkreaction unset,unset \
                 --threads     "$THREADS" \
-        > "${out_dir}/count.log" 2>&1
+            > "${out_dir}/count.log" 2>&1
+            cd - >/dev/null
+        else
+            docker run --rm \
+                -v "${REF_DIR}:/ref:ro" \
+                -v "${index_dir}:/genome:ro" \
+                -v "$(realpath "$cdna_r1"):/input/cdna_r1.fq.gz:ro" \
+                -v "$(realpath "$cdna_r2"):/input/cdna_r2.fq.gz:ro" \
+                -v "$(realpath "$oligo_r1"):/input/oligo_r1.fq.gz:ro" \
+                -v "$(realpath "$oligo_r2"):/input/oligo_r2.fq.gz:ro" \
+                -v "${out_dir}:/output" \
+                -w /output \
+                "$IMG" \
+                dnbc4tools rna run \
+                    --name "$s" \
+                    --cDNAfastq1  /input/cdna_r1.fq.gz \
+                    --cDNAfastq2  /input/cdna_r2.fq.gz \
+                    --oligofastq1 /input/oligo_r1.fq.gz \
+                    --oligofastq2 /input/oligo_r2.fq.gz \
+                    --genomeDir   /genome/${SPECIES} \
+                    --chemistry   scRNAv2HT \
+                    --darkreaction unset,unset \
+                    --threads     "$THREADS" \
+            > "${out_dir}/count.log" 2>&1
+        fi
 
         if [[ $? -eq 0 ]]; then
             ok "  [count] ${s} 完成"

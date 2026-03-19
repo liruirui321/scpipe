@@ -176,6 +176,54 @@ cd docker
 bash build_push.sh <your-dockerhub-username> all
 ```
 
+## 无 Docker 模式
+
+如果服务器没有 Docker，可以用 conda 安装所有依赖：
+
+```bash
+# 安装依赖（自动创建 conda 环境 + 下载 dnbc4tools）
+scpipe install-deps
+
+# 激活环境
+conda activate scpipe
+source .scpipe_local/env.sh
+
+# 使用 --local 参数运行（不调用 Docker）
+scpipe upstream all --local
+scpipe downstream all --local
+```
+
+或手动安装：
+
+```bash
+# 创建 conda 环境
+conda env create -f environment.yml
+conda activate scpipe
+
+# 下载 dnbc4tools
+wget -O dnbc4tools-3.0.tar.gz "ftp://ftp2.cngb.org/pub/CNSA/data7/CNP0008672/Single_Cell/CSE0000574/dnbc4tools-3.0.tar.gz"
+tar -xzf dnbc4tools-3.0.tar.gz
+export PATH=$(pwd)/dnbc4tools3.0:$PATH
+export LD_LIBRARY_PATH=$(pwd)/dnbc4tools3.0/external/conda/lib:$LD_LIBRARY_PATH
+
+# 运行
+export SCPIPE_MODE=local
+bash scripts/run_upstream.sh all
+```
+
+## Singularity/Apptainer（HPC 集群）
+
+如果集群支持 Singularity 但不支持 Docker：
+
+```bash
+# 转换 Docker 镜像为 Singularity
+singularity pull docker://liruirui123/dnbc4tools:latest
+singularity pull docker://liruirui123/py-scanpy:latest
+
+# 用 singularity exec 替代 docker run
+singularity exec dnbc4tools_latest.sif dnbc4tools rna mkref ...
+```
+
 ## License
 
 MIT

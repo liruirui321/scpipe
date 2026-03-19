@@ -1,0 +1,33 @@
+name: scpipe
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Python
+  - python=3.10
+  - numpy=1.26
+  - pandas
+  - scipy
+  - matplotlib
+  - seaborn
+  - h5py
+  - leidenalg
+  - python-igraph
+  - pip
+  # scanpy + scrublet
+  - pip:
+    - anndata==0.10.7
+    - scanpy==1.10.1
+    - scrublet==0.2.3
+    - pysam==0.22.1
+  # R
+  - r-base=4.3
+  - r-matrix
+  - r-ggplot2
+  - r-optparse
+  - r-r.utils
+  - r-remotes
+  - r-seurat
+  - r-hdf5r
+  - bioconductor-rhdf5
