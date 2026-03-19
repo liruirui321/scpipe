@@ -22,7 +22,7 @@ from . import __version__, DOCKER_IMAGES
 
 def get_script_dir():
     """返回 scripts/ 目录路径"""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts')
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scripts')
 
 
 def get_template_dir():
@@ -36,15 +36,19 @@ def run_shell(script_name, args=None, cwd=None):
     if not os.path.exists(script):
         print(f"Error: 找不到脚本 {script}")
         sys.exit(1)
-    cmd = ['bash', script] + (args or [])
-    result = subprocess.run(cmd, cwd=cwd or os.getcwd())
+    bash = shutil.which('bash') or '/bin/bash'
+    cmd = [bash, script] + (args or [])
+    env = os.environ.copy()
+    env['PATH'] = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + env.get('PATH', '')
+    result = subprocess.run(cmd, cwd=cwd or os.getcwd(), env=env)
     return result.returncode
 
 
 def check_docker():
     """检查 Docker 是否可用"""
+    docker_cmd = shutil.which('docker') or '/usr/local/bin/docker'
     try:
-        result = subprocess.run(['docker', 'info'], capture_output=True, timeout=10)
+        result = subprocess.run([docker_cmd, 'info'], capture_output=True, timeout=10)
         if result.returncode != 0:
             print("Error: Docker 未运行。请启动 Docker (OrbStack/Docker Desktop)")
             sys.exit(1)
@@ -100,7 +104,7 @@ def cmd_pull(args):
 def cmd_test(args):
     """生成测试数据并运行 pipeline 验证"""
     check_docker()
-    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tests', 'generate_test_data.py')
+    test_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generate_test_data.py')
     outdir = os.path.join(os.getcwd(), 'test_data')
 
     print("生成测试数据 ...")
@@ -115,11 +119,10 @@ def cmd_test(args):
         sys.exit(1)
 
     print("\n测试数据已生成，运行 upstream pipeline ...")
-    # 创建测试配置
+    # 创建测试配置（覆盖）
     test_config = os.path.join(os.getcwd(), 'upstream_config.sh')
-    if not os.path.exists(test_config):
-        with open(test_config, 'w') as f:
-            f.write(f'''UPSTREAM_WORKDIR="$(pwd)/upstream_output"
+    with open(test_config, 'w') as f:
+        f.write(f'''UPSTREAM_WORKDIR="$(pwd)/upstream_output"
 SPECIES="test_species"
 THREADS=4
 FASTA_FILE="{outdir}/genome.fa"
